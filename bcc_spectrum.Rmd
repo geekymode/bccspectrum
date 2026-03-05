@@ -1,0 +1,812 @@
+---
+title: "Distance Spectrum of IEEE 802.11 Binary Convolutional Codes"
+author: |
+  Rethna Pulikkoonattu  
+  rethna@broadcom.com
+date: ""
+output:
+  tufte::tufte_html:
+    tufte_variant: "envisioned"
+    number_sections: true
+    toc: true
+    self_contained: true
+  tufte::tufte_handout:
+    citation_package: natbib
+    latex_engine: pdflatex
+    keep_tex: false
+    biblio-style: abbrvnat
+bibliography: bcc_spectrum.bib
+link-citations: true
+header-includes:
+  - \usepackage{amsmath,amssymb,amsthm}
+  - \usepackage{tikz}
+  - \usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,backgrounds,decorations.pathreplacing,matrix,calc}
+  - \usepackage{nicefrac}
+  - \usepackage{booktabs}
+  - \usepackage{microtype}
+  - \usepackage{xcolor}
+  - \usepackage{algorithm}
+  - \usepackage{algpseudocode}
+  - \usepackage{pgfplots}
+  - \pgfplotsset{compat=1.18}
+  - \usepgfplotslibrary{groupplots}
+  - \usepackage{listings}
+  - \usepackage[most]{tcolorbox}
+  - \definecolor{tuftered}{RGB}{179,27,27}
+  - \definecolor{tufteblue}{RGB}{31,73,125}
+  - \definecolor{tuftegreen}{RGB}{0,110,60}
+  - \definecolor{pyblue}{RGB}{31,119,180}
+  - \definecolor{julgreen}{RGB}{39,139,58}
+  - \definecolor{cppred}{RGB}{180,40,40}
+  - \definecolor{outgray}{RGB}{60,60,60}
+  - \newtheoremstyle{tuftethm}{}{}{\itshape}{}{\bfseries}{.}{.5em}{}
+  - \theoremstyle{tuftethm}
+  - \newtheorem{definition}{Definition}
+  - \newtheorem{remark}{Remark}
+  - \newcommand{\D}{\mathsf{D}}
+  - \newcommand{\N}{\mathsf{N}}
+  - \newcommand{\Qmat}{\mathbf{Q}}
+  - \newcommand{\Emat}{\mathbf{E}}
+  - \newcommand{\Rmat}{\mathbf{R}}
+  - \newcommand{\bx}{\mathbf{x}}
+  - \newcommand{\oct}[1]{\ensuremath{#1_8}}
+  - \lstset{basicstyle=\ttfamily\footnotesize,breaklines=true,columns=flexible,keepspaces=true}
+  - \tcbset{codebox/.style={fonttitle=\bfseries\small,colbacktitle=#1!80!black,colback=#1!10!white,coltitle=white,colframe=#1!60!black,boxrule=0.6pt,arc=3pt,left=4pt,right=4pt,top=2pt,bottom=2pt,listing only,listing options={basicstyle=\ttfamily\scriptsize,breaklines=true,columns=flexible,keepspaces=true}}}
+---
+
+```{r setup, include=FALSE}
+# Anchor the working directory to the folder containing this Rmd.
+# This ensures bcc_spectrum.bib and fig_standalone/ are always found.
+if (!is.null(knitr::current_input())) {
+  knitr::opts_knit$set(root.dir = normalizePath(dirname(knitr::current_input())))
+}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(knitr)
+is_pdf  <- knitr::is_latex_output()
+is_html <- knitr::is_html_output()
+# Path to pre-rendered figure PNGs (relative to this Rmd)
+fig_dir <- "fig_standalone"
+```
+
+```{r abstract-html, results='asis', eval=is_html}
+cat('<div class="abstract">
+<p><strong>Abstract.</strong>
+Binary convolutional coding (BCC) has been a cornerstone of the IEEE 802.11 wireless LAN standard
+since its inception, and it remains relevant today across the full generational arc from legacy
+802.11a/g through Wi-Fi 6 (802.11ax) and into the forthcoming Wi-Fi 8 (802.11bn).
+Although LDPC codes now dominate high-throughput applications, BCC is mandatory for backward
+compatibility and continues to serve as the <em>default</em> FEC scheme in 20 MHz-only devices,
+IoT nodes, and other cost-sensitive deployments where LDPC decoder complexity is prohibitive.
+BCC at rate 1/2 is the coding scheme used throughout the packet preamble in every 802.11-compliant
+frame. The new <em>Enhanced Long Range</em> (ELR) packet format in 802.11bn also mandates
+rate-1/2 BCC for the data portion, reinforcing its continued importance.</p>
+<p>The performance of BCC under Viterbi decoding is governed by the <em>distance spectrum</em>
+{(&alpha;<sub>d</sub>, &beta;<sub>d</sub>)}<sub>d &ge; d<sub>free</sub></sub>.
+This note explains how to compute that spectrum exactly for the IEEE 802.11 mother code
+(rate 1/2, K=7, generators 133<sub>8</sub>/171<sub>8</sub>) and its three standard punctured
+derivatives (rates 2/3, 3/4, 5/6). Union-bound BEP and FER curves are derived for AWGN
+with BPSK/QPSK and Gray-coded M-QAM and validated against Monte Carlo simulation.
+Python, Julia, and C++ implementations are openly available at
+<a href="https://github.com/geekymode/bcc_spectrum">github.com/geekymode/bcc_spectrum</a>.</p>
+</div>')
+```
+
+```{=latex}
+\begin{abstract}
+\noindent
+Binary convolutional coding (BCC) has been a cornerstone of the IEEE~802.11
+wireless LAN standard since its inception, and it remains relevant today across
+the full generational arc from the legacy \mbox{802.11a/g} through Wi-Fi~6
+(802.11ax) and into the forthcoming Wi-Fi~8 (802.11bn) \citep{ieee80211,ieee80211bn}.
+Although LDPC codes now dominate high-throughput applications, BCC is mandatory
+for backward compatibility and continues to serve as the \emph{default} FEC scheme
+in bandwidth-constrained and cost-sensitive deployments: 20\,MHz-only devices,
+Internet-of-Things nodes, and other implementations where LDPC decoder complexity
+is prohibitive. BCC at rate~$\nicefrac{1}{2}$ is the coding scheme used throughout
+the packet preamble in every IEEE~802.11-compliant frame. The new \emph{Enhanced
+Long Range} (ELR) packet format in 802.11bn mandates rate-$\nicefrac{1}{2}$ BCC
+for the data portion, reinforcing its continued importance \citep{ieee80211bn}.
+
+The performance of BCC under Viterbi decoding is governed by the \emph{distance
+spectrum} $\{(\alpha_d,\beta_d)\}_{d\geq d_\mathrm{free}}$ \citep{lin04,viterbi67}.
+This note explains how to compute that spectrum exactly for the IEEE~802.11 mother
+code (rate~$\nicefrac{1}{2}$, $K=7$, generators $\oct{133}$/$\oct{171}$) and its
+three standard punctured derivatives (rates $\nicefrac{2}{3}$, $\nicefrac{3}{4}$,
+$\nicefrac{5}{6}$) \citep{cain79,hagenauer88}. Union-bound BEP and FER curves are
+derived for AWGN with BPSK/QPSK and Gray-coded $M$-QAM modulation and validated
+against Monte Carlo simulation. Python, Julia, and C++ implementations are openly
+available at \citep{bcc_github}.
+\end{abstract}
+```
+
+# Introduction
+
+Despite the ubiquity of BCC in deployed IEEE 802.11 systems, a recurring obstacle
+when analysing or benchmarking its performance is the absence of a self-contained,
+publicly accessible resource that derives the distance spectrum from first principles
+and connects it cleanly to BER and FER bounds. Existing textbook treatments
+[@lin04; @proakis01; @viterbi79] cover the theory at varying levels of generality
+but do not provide spectrum tables, working code, or simulation-validated bound
+curves specific to the 802.11 puncture schedules. Standards documents [@ieee80211]
+state the generator polynomials and puncture matrices but say nothing about
+performance analysis.
+
+This report attempts to fill that gap. The distance spectrum for each of the four
+standard rates is tabulated exactly; union-bound BEP and FER curves are derived and
+cross-validated against Monte Carlo simulation for both QPSK and 256-QAM; and the
+complete computational procedure is documented in pseudocode and three reference
+implementations (Python, Julia, C++). The source code is freely available at
+<https://github.com/geekymode/bcc_spectrum> [@bcc_github].
+
+# The Mother Code
+
+## Encoder shift register
+
+The 802.11 BCC is a *rate-$\frac{1}{2}$, constraint-length-$7$* convolutional
+encoder [@forney70] with generator polynomials
+$$g_1 = 133_8 = (1,0,1,1,0,1,1), \qquad g_2 = 171_8 = (1,1,1,1,0,0,1).$$
+In polynomial form, with $D$ the unit-delay operator,
+$$g_1(D)=1+D^2+D^3+D^5+D^6, \qquad g_2(D)=1+D+D^2+D^3+D^6.$$
+These generators were identified by Odenwalder [@odenwalder70] as maximising free
+distance at rate $\frac{1}{2}$, $K=7$, standardised by CCSDS [@ccsds], and
+adopted in IEEE 802.11 [@ieee80211]. At each clock cycle the encoder reads one
+input bit $u_n$, shifts it into a 6-stage register, and XORs selected taps to
+produce two output bits $(v_n^{(1)}, v_n^{(2)})$.
+
+```{r fig-encoder, fig.cap="IEEE 802.11 K=7 BCC shift-register encoder. Each D box is a unit-delay; ⊕ is mod-2 addition. The g₁=133₈ XOR chain runs above (taps 0,2,3,5,6); g₂=171₈ runs below (taps 0,1,2,3,6).", eval=is_html, out.width="100%"}
+knitr::include_graphics(file.path(fig_dir, "fig_encoder.png"))
+```
+
+```{=latex}
+\begin{figure}[ht]
+\centering
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  reg/.style={draw,rectangle,thick,minimum width=0.90cm,minimum height=0.62cm,font=\small},
+  xorg/.style={draw,circle,thick,inner sep=0pt,minimum size=0.32cm,font=\tiny},
+  >=Stealth,thick]
+\node[reg](Del1)at(1.5,0){$D$};\node[reg](Del2)at(3.0,0){$D$};
+\node[reg](Del3)at(4.5,0){$D$};\node[reg](Del4)at(6.0,0){$D$};
+\node[reg](Del5)at(7.5,0){$D$};\node[reg](Del6)at(9.0,0){$D$};
+\foreach \a/\b in {Del1/Del2,Del2/Del3,Del3/Del4,Del4/Del5,Del5/Del6}
+  \draw[->](\a.east)--(\b.west);
+\coordinate(TAP0)at(0.0,0);
+\draw[->](-1.6,0)--(TAP0)node[pos=0.0,left,font=\scriptsize]{$u_n$};
+\draw[->](TAP0)--(Del1.west);\filldraw(TAP0)circle(2.5pt);
+\node[xorg](A0)at(0.0,1.70){$\oplus$};\node[xorg](A2)at(3.0,1.70){$\oplus$};
+\node[xorg](A3)at(4.5,1.70){$\oplus$};\node[xorg](A5)at(7.5,1.70){$\oplus$};
+\node[xorg](A6)at(9.0,1.70){$\oplus$};
+\draw[->](-1.6,1.70)--(A0.west);\draw[->](A0.east)--(A2.west);
+\draw[->](A2.east)--(A3.west);\draw[->](A3.east)--(A5.west);
+\draw[->](A5.east)--(A6.west);
+\draw[->](A6.east)--++(0.6,0)node[right,font=\scriptsize]{$v_n^{(1)}$};
+\node[font=\scriptsize,anchor=east]at(-1.6,1.70){$g_1{=}\oct{133}$:};
+\draw[->](TAP0)--(A0.south);\draw[->](Del2.north)--(A2.south);
+\draw[->](Del3.north)--(A3.south);\draw[->](Del5.north)--(A5.south);\draw[->](Del6.north)--(A6.south);
+\node[xorg](B0)at(0.0,-1.90){$\oplus$};\node[xorg](B1)at(1.5,-1.90){$\oplus$};
+\node[xorg](B2)at(3.0,-1.90){$\oplus$};\node[xorg](B3)at(4.5,-1.90){$\oplus$};
+\node[xorg](B6)at(9.0,-1.90){$\oplus$};
+\draw[->](-1.6,-1.90)--(B0.west);\draw[->](B0.east)--(B1.west);
+\draw[->](B1.east)--(B2.west);\draw[->](B2.east)--(B3.west);
+\draw[->](B3.east)--(B6.west)node[midway,below,font=\tiny,inner sep=1pt]{(pos.\ 4,\,5 untapped)};
+\draw[->](B6.east)--++(0.6,0)node[right,font=\scriptsize]{$v_n^{(2)}$};
+\node[font=\scriptsize,anchor=east]at(-1.6,-1.90){$g_2{=}\oct{171}$:};
+\draw[->](TAP0)--(B0.north);\draw[->](Del1.south)--(B1.north);
+\draw[->](Del2.south)--(B2.north);\draw[->](Del3.south)--(B3.north);\draw[->](Del6.south)--(B6.north);
+\end{tikzpicture}}
+\caption{IEEE~802.11 $K=7$ BCC encoder. $g_1=\oct{133}$ XOR chain above (taps 0,2,3,5,6);
+  $g_2=\oct{171}$ below (taps 0,1,2,3,6).}
+\label{fig:encoder}
+\end{figure}
+```
+
+## Trellis state
+
+The encoder state $\sigma_n=(u_{n-1},\ldots,u_{n-6})\in\{0,\ldots,63\}$.
+A transition $\sigma\xrightarrow{u}\sigma'$ is [@forney70; @lin04]:
+$$\sigma'=\bigl((\sigma\ll 1)\;\&\;\texttt{0x3F}\bigr)\;|\;u, \qquad
+  v^{(k)}=\bigoplus_{i=0}^{6}g_k[i]\cdot r_i,\quad \mathbf{r}=(u,\sigma_0,\ldots,\sigma_5).$$
+The trellis [@forney73] has 64 states, each with two outgoing branches.
+
+```{r fig-trellis, fig.cap="Rate-1/2 trellis, 4 lowest states over n=0,…,7. Blue solid: u=0; red dashed: u=1. Edge labels (v⁽¹⁾v⁽²⁾) shown at first transition only.", eval=is_html, out.width="100%"}
+knitr::include_graphics(file.path(fig_dir, "fig_trellis.png"))
+```
+
+```{=latex}
+\begin{figure*}[ht]
+\centering
+\begin{tikzpicture}[
+  snode/.style={circle,draw,thick,minimum size=0.28cm,font=\tiny,inner sep=0pt},
+  e0/.style={->,>=Stealth,thick,draw=tufteblue},
+  e1/.style={->,>=Stealth,thick,draw=tuftered,dashed},
+  lbl/.style={font=\tiny,fill=white,inner sep=1pt}]
+\foreach \t in {0,1,...,7}{\foreach \s in {0,1,2,3}{
+  \node[snode](N\t\s)at(\t*2.1,-\s*1.15){};}\node[above,font=\scriptsize]at(\t*2.1,0.42){$n{=}\t$};}
+\foreach \s/\lbl in {0/00,1/01,2/10,3/11}{
+  \node[left=0.18cm of N0\s,font=\scriptsize]{$\sigma{=}\lbl$};
+  \node[right=0.18cm of N7\s,font=\scriptsize]{$\lbl$};}
+\draw[e0](N00)to node[lbl,above,sloped]{00}(N10);\draw[e1](N00)to node[lbl,below,sloped]{11}(N12);
+\draw[e0](N01)to node[lbl,above,sloped]{11}(N10);\draw[e1](N01)to node[lbl,below,sloped]{00}(N12);
+\draw[e0](N02)to node[lbl,above,sloped]{10}(N11);\draw[e1](N02)to node[lbl,below,sloped]{01}(N13);
+\draw[e0](N03)to node[lbl,above,sloped]{01}(N11);\draw[e1](N03)to node[lbl,below,sloped]{10}(N13);
+\foreach \t in {1,2,...,6}{\pgfmathtruncatemacro{\tn}{\t+1}
+  \draw[e0](N\t0)--(N\tn0);\draw[e1](N\t0)--(N\tn2);
+  \draw[e0](N\t1)--(N\tn0);\draw[e1](N\t1)--(N\tn2);
+  \draw[e0](N\t2)--(N\tn1);\draw[e1](N\t2)--(N\tn3);
+  \draw[e0](N\t3)--(N\tn1);\draw[e1](N\t3)--(N\tn3);}
+\node[font=\scriptsize,anchor=west]at(0.0,-5.0){%
+  \textcolor{tufteblue}{---}\;$u=0$\quad\textcolor{tuftered}{--}\;$u=1$\quad Labels at $n{=}0$: $(v^{(1)}v^{(2)})$};
+\end{tikzpicture}
+\caption{Rate-$\frac{1}{2}$ trellis, 4 states, $n=0,\ldots,7$. Blue: $u=0$; red dashed: $u=1$.}
+\label{fig:trellis}
+\end{figure*}
+```
+
+# Puncturing and Puncture Matrices
+
+Higher code rates are obtained by *puncturing*: periodically deleting output bits before
+transmission [@cain79; @yasuda84; @hagenauer88]. A binary *puncture matrix* $\mathbf{P}$
+specifies which bits survive (1 = transmit, 0 = delete). The serialised mask $\mathbf{p}$
+is read column-by-column.
+
+## Rate $\frac{1}{2}$ — unpunctured
+
+$$\mathbf{P}_{1/2}=\begin{pmatrix}1\\1\end{pmatrix},\quad\mathbf{p}=(1,1).$$
+
+## Rate $\frac{2}{3}$
+
+$$\mathbf{P}_{2/3}=\begin{pmatrix}1&1\\1&0\end{pmatrix},\quad\mathbf{p}=(1,1,1,0),\quad L=4.$$
+
+## Rate $\frac{3}{4}$
+
+$$\mathbf{P}_{3/4}=\begin{pmatrix}1&1&0\\1&0&1\end{pmatrix},\quad\mathbf{p}=(1,1,1,0,0,1),\quad L=6.$$
+
+## Rate $\frac{5}{6}$
+
+$$\mathbf{P}_{5/6}=\begin{pmatrix}1&1&0&1&0\\1&0&1&0&1\end{pmatrix},\quad\mathbf{p}=(1,1,1,0,0,1,1,0,1,0),\quad L=10.$$
+
+```{r masks-table}
+df <- data.frame(
+  Rate  = c("1/2","2/3","3/4","5/6"),
+  Mask  = c("11","1110","111001","1110011010"),
+  L     = c(2,4,6,10),
+  dfree = c(10,6,5,4))
+knitr::kable(df, col.names=c("Rate","Mask **p**","L","d_free"),
+  caption="IEEE 802.11 puncture masks and free distances.",
+  booktabs=TRUE, align="llcc")
+```
+
+```{r fig-puncture, fig.cap="Rate-3/4 mask 111001 over two periods. Solid border: transmitted. Dashed: deleted.", eval=is_html, out.width="100%"}
+knitr::include_graphics(file.path(fig_dir, "fig_puncture.png"))
+```
+
+```{=latex}
+\begin{figure}[ht]\centering
+\begin{tikzpicture}[
+  kept/.style={draw,thick,rectangle,minimum width=0.82cm,minimum height=0.54cm,font=\small},
+  gone/.style={draw,thick,dashed,rectangle,minimum width=0.82cm,minimum height=0.54cm,font=\small,text=gray!70},>=Stealth]
+\node[kept]at(0*0.90,0){$v_0^1$};\node[kept]at(1*0.90,0){$v_0^2$};
+\node[kept]at(2*0.90,0){$v_1^1$};\node[gone]at(3*0.90,0){$v_1^2$};
+\node[gone]at(4*0.90,0){$v_2^1$};\node[kept]at(5*0.90,0){$v_2^2$};
+\node[kept]at(6*0.90,0){$v_3^1$};\node[kept]at(7*0.90,0){$v_3^2$};
+\node[kept]at(8*0.90,0){$v_4^1$};\node[gone]at(9*0.90,0){$v_4^2$};
+\node[gone]at(10*0.90,0){$v_5^1$};\node[kept](c11)at(11*0.90,0){$v_5^2$};
+\draw[decorate,decoration={brace,amplitude=5pt,mirror}]
+  (-0.41,-0.40)--(5*0.90+0.41,-0.40)node[midway,below=6pt,font=\scriptsize]{period 1 ($L=6$)};
+\draw[decorate,decoration={brace,amplitude=5pt,mirror}]
+  (6*0.90-0.41,-0.40)--(11*0.90+0.41,-0.40)node[midway,below=6pt,font=\scriptsize]{period 2};
+\end{tikzpicture}
+\caption{Rate-$\frac{3}{4}$ puncture mask \texttt{111001} over two periods.}
+\label{fig:puncture}
+\end{figure}
+```
+
+# Distance Spectrum: Definitions
+
+**Definition (Distance spectrum** [@lin04; @ryan09; @viterbi79]**).**
+The distance spectrum $\{(\alpha_d,\beta_d)\}_{d\geq d_\mathrm{free}}$: $\alpha_d$ counts
+error events at Hamming distance $d$ from the all-zero codeword; $\beta_d$ is the total
+input Hamming weight of those paths. The smallest $d$ with $\alpha_d>0$ is the
+*free distance* $d_\mathrm{free}$ [@viterbi67; @forney70].
+
+# BER Bounds from the Distance Spectrum
+
+## Union bound on bit-error probability
+
+For the Viterbi decoder [@viterbi67; @forney73] over AWGN with BPSK, the pairwise error
+probability at Hamming distance $d$ is [@proakis01; @ryan09]
+$$P_2(d)=Q\!\left(\sqrt{2d\,R_c\,\frac{E_b}{N_0}}\right).$$
+The *union-bound bit-error probability* is [@viterbi67; @lin04]
+$$P_b\;\lesssim\;\sum_{d=d_\mathrm{free}}^{D_{\max}}\beta_d\;Q\!\left(\sqrt{2d\,R_c\,\frac{E_b}{N_0}}\right). \tag{UB}$$
+
+## Frame error rate
+
+$$P_f\;\lesssim\;\sum_{d=d_\mathrm{free}}^{D_{\max}}\alpha_d\;Q\!\left(\sqrt{2d\,R_c\,\frac{E_b}{N_0}}\right). \tag{FER}$$
+
+## Single-term approximation
+
+$$P_b\;\approx\;\beta_{d_\mathrm{free}}\;Q\!\left(\sqrt{2\,d_\mathrm{free}\,R_c\,\frac{E_b}{N_0}}\right).$$
+
+```{r ber-table}
+snr <- c(3,4,5,6,7,8)
+df <- data.frame(
+  SNR = snr,
+  Pb12=c("1.6e-1","4.2e-2","4.2e-4","5.8e-8","<1e-14","<<1e-20"),
+  Pf12=c("1.8e-1","5.3e-2","5.3e-4","7.2e-8","<1e-14","<<1e-20"),
+  Pb23=c("1.4e-1","5.1e-2","8.7e-3","4.4e-4","3.6e-6","3.5e-9"),
+  Pf23=c("1.4e-1","5.3e-2","9.0e-3","4.5e-4","3.7e-6","3.6e-9"),
+  Pb34=c("1.3e-1","6.3e-2","1.7e-2","2.0e-3","5.4e-5","2.7e-7"),
+  Pf34=c("1.1e-1","5.5e-2","1.5e-2","1.7e-3","4.7e-5","2.4e-7"),
+  Pb56=c("1.2e-1","8.1e-2","4.4e-2","1.3e-2","1.9e-3","1.4e-4"),
+  Pf56=c("1.7e-1","1.1e-1","6.2e-2","1.8e-2","2.6e-3","2.0e-4"))
+knitr::kable(df,
+  col.names=c("Eb/N0 (dB)",
+    "Pb R=1/2","Pf R=1/2","Pb R=2/3","Pf R=2/3",
+    "Pb R=3/4","Pf R=3/4","Pb R=5/6","Pf R=5/6"),
+  caption="Union-bound BEP and FER (10 spectrum terms, BPSK/AWGN).",
+  booktabs=TRUE, align=c("r",rep("r",8)))
+```
+
+The union bound is loose at low SNR but tightens rapidly in the waterfall region
+[@forney73]. The rate-1/2 code provides roughly 4--5 dB coding gain at
+$P_b=10^{-5}$ [@heller71; @proakis01]. Figure \ref{fig:ber_fer} shows both bounds.
+
+```{r fig-berfer, fig.cap="BEP (left) and FER (right, K=1024) union bounds with simulation markers for all four IEEE 802.11 BCC rates over AWGN/QPSK. Lines: bounds (30 terms); dot-dashed+markers: Monte Carlo. Dotted black: uncoded BPSK.", eval=is_html, out.width="100%"}
+knitr::include_graphics(file.path(fig_dir, "fig_berferfull.png"))
+```
+
+```{=latex}
+\begin{figure*}[ht]\centering
+\begin{tikzpicture}
+\begin{groupplot}[group style={group size=2 by 1,horizontal sep=2.4cm},
+  width=0.46\textwidth,height=0.46\textwidth,xmin=-2,xmax=10,
+  ymode=log,ymin=1e-9,ymax=1.5,xlabel={$E_b/N_0$ (dB)},
+  grid=both,grid style={line width=0.3pt,draw=gray!30},
+  major grid style={line width=0.5pt,draw=gray!50},
+  tick label style={font=\scriptsize},label style={font=\small},
+  legend style={font=\scriptsize,at={(0.03,0.03)},anchor=south west,
+    draw=gray!60,fill=white,inner sep=3pt,row sep=-1pt},
+  legend cell align=left,clip=true]
+\nextgroupplot[ylabel={BER $P_b$}]
+\addplot[black,densely dotted,thick]coordinates{(-2,1.354e-01)(-1,1.057e-01)(0,7.865e-02)(1,5.628e-02)(2,3.751e-02)(3,2.288e-02)(4,1.250e-02)(5,5.954e-03)(6,2.388e-03)(7,7.727e-04)(8,1.909e-04)(9,3.363e-05)(10,3.872e-06)};
+\addlegendentry{Uncoded BPSK}
+\addplot[tufteblue,solid,thick]coordinates{(2.25,2.053e-01)(2.5,1.993e-02)(3,8.896e-04)(3.5,1.155e-04)(4,1.878e-05)(4.5,3.033e-06)(5,4.427e-07)(5.5,5.514e-08)(6,5.609e-09)(6.5,4.48e-10)(7,2.702e-11)};
+\addlegendentry{$R=1/2$ (bound)}
+\addplot[tufteblue,dashdotted,thick,mark=*,mark size=2pt]coordinates{(0,1.501e-01)(1,3.889e-02)(2,4.894e-03)(3,3.585e-04)(4,1.532e-05)(5,3.337e-07)(6,6.523e-09)};
+\addlegendentry{$R=1/2$ (sim)}
+\addplot[tuftered,solid,thick]coordinates{(2.75,3.093e-01)(3,4.374e-02)(3.5,1.914e-03)(4,2.084e-04)(4.5,3.043e-05)(5,4.567e-06)(5.5,6.361e-07)(6,7.786e-08)(6.5,8.065e-09)(7,6.855e-10)};
+\addlegendentry{$R=2/3$ (bound)}
+\addplot[tuftered,dashdotted,thick,mark=square*,mark size=2pt]coordinates{(0,2.908e-01)(1,1.203e-01)(2,2.131e-02)(3,1.571e-03)(4,7.148e-05)(5,2.077e-06)(6,4.111e-08)};
+\addlegendentry{$R=2/3$ (sim)}
+\addplot[tuftegreen,solid,thick]coordinates{(3.25,3.834e-01)(3.5,4.226e-02)(4,2.050e-03)(4.5,2.763e-04)(5,4.732e-05)(5.5,8.192e-06)(6,1.303e-06)(6.5,1.798e-07)(7,2.057e-08)(7.5,1.878e-09)(8,1.317e-10)};
+\addlegendentry{$R=3/4$ (bound)}
+\addplot[tuftegreen,dashdotted,thick,mark=triangle*,mark size=2.5pt]coordinates{(-2,4.756e-01)(-1,4.503e-01)(0,3.706e-01)(1,2.299e-01)(2,5.940e-02)(3,5.436e-03)(4,3.101e-04)(5,1.266e-05)(6,4.196e-07)(7,6.650e-09)};
+\addlegendentry{$R=3/4$ (sim)}
+\addplot[violet,solid,thick]coordinates{(4,1.191e-01)(4.5,3.750e-03)(5,4.964e-04)(5.5,8.782e-05)(6,1.587e-05)(6.5,2.634e-06)(7,3.773e-07)(7.5,4.459e-08)(8,4.182e-09)(8.5,2.998e-10)};
+\addlegendentry{$R=5/6$ (bound)}
+\addplot[violet,dashdotted,thick,mark=diamond*,mark size=2.5pt]coordinates{(-1,4.682e-01)(0,4.333e-01)(1,3.438e-01)(2,1.640e-01)(3,2.604e-02)(4,1.848e-03)(5,9.341e-05)(6,2.696e-06)(7,6.165e-08)};
+\addlegendentry{$R=5/6$ (sim)}
+\nextgroupplot[ylabel={FER $P_f$}]
+\addplot[tufteblue,solid,thick]coordinates{(2.75,3.024e-01)(3,1.171e-01)(3.5,2.233e-02)(4,4.390e-03)(4.5,7.907e-04)(5,1.234e-04)(5.5,1.604e-05)(6,1.678e-06)(6.5,1.365e-07)(7,8.328e-09)};
+\addlegendentry{$R=1/2$ (bound)}
+\addplot[tufteblue,dashdotted,thick,mark=*,mark size=2pt]coordinates{(1,9.775e-01)(2,4.863e-01)(3,6.315e-02)(4,3.701e-03)(5,9.602e-05)(6,1.885e-06)};
+\addlegendentry{$R=1/2$ (sim)}
+\addplot[tuftered,solid,thick]coordinates{(3.25,5.135e-01)(3.5,1.803e-01)(4,3.052e-02)(4.5,5.603e-03)(5,9.697e-04)(5.5,1.494e-04)(6,1.976e-05)(6.5,2.184e-06)(7,1.963e-07)(7.5,1.396e-08)};
+\addlegendentry{$R=2/3$ (bound)}
+\addplot[tuftered,dashdotted,thick,mark=square*,mark size=2pt]coordinates{(1,9.994e-01)(2,8.008e-01)(3,1.616e-01)(4,1.164e-02)(5,4.847e-04)(6,9.860e-06)(7,1.300e-07)};
+\addlegendentry{$R=2/3$ (sim)}
+\addplot[tuftegreen,solid,thick]coordinates{(3.75,4.774e-01)(4,1.857e-01)(4.5,3.612e-02)(5,7.375e-03)(5.5,1.404e-03)(6,2.358e-04)(6.5,3.355e-05)(7,3.911e-06)(7.5,3.610e-07)(8,2.548e-08)};
+\addlegendentry{$R=3/4$ (bound)}
+\addplot[tuftegreen,dashdotted,thick,mark=triangle*,mark size=2.5pt]coordinates{(2,9.434e-01)(3,3.484e-01)(4,3.635e-02)(5,1.979e-03)(6,7.247e-05)(7,1.238e-06)};
+\addlegendentry{$R=3/4$ (sim)}
+\addplot[violet,solid,thick]coordinates{(4.25,7.253e-01)(4.5,2.760e-01)(5,5.478e-02)(5.5,1.156e-02)(6,2.274e-03)(6.5,3.938e-04)(7,5.761e-05)(7.5,6.880e-06)(8,6.485e-07)(8.5,4.660e-08)(9,2.461e-09)};
+\addlegendentry{$R=5/6$ (bound)}
+\addplot[violet,dashdotted,thick,mark=diamond*,mark size=2.5pt]coordinates{(2,9.964e-01)(3,7.119e-01)(4,1.309e-01)(5,1.095e-02)(6,4.010e-04)(7,9.484e-06)(8,1.300e-07)};
+\addlegendentry{$R=5/6$ (sim)}
+\end{groupplot}
+\end{tikzpicture}
+\caption{BEP (left) and FER (right, $K=1024$) union bounds + simulation.
+  $\bullet\,R=\frac{1}{2}$, $\blacksquare\,R=\frac{2}{3}$,
+  $\blacktriangle\,R=\frac{3}{4}$, $\blacklozenge\,R=\frac{5}{6}$.}
+\label{fig:ber_fer}
+\end{figure*}
+```
+
+# Bounds for Gray-Coded $M$-QAM
+
+## Channel model and penalty factor $\Delta_M$
+
+Under the BICM model [@caire98], the pairwise error probability at distance $d$ becomes
+$$P_2(d)\leq Q\!\left(\sqrt{2\,R_c\,d\,\Delta_M\,\frac{E_b}{N_0}}\right),\qquad
+  \Delta_M=\frac{3\,m}{2(M-1)},\quad m=\log_2 M,\quad M\geq 4.$$
+For QPSK ($M=4$), $\Delta_M=1$, recovering the BPSK result.
+
+```{r deltaM-table}
+df <- data.frame(
+  M=c(4,16,64,256), m=c(2,4,6,8),
+  Delta=c("1","2/5 = 0.4","2/14 ≈ 0.143","8/170 ≈ 0.047"),
+  Penalty=c("0.0","−4.0","−8.5","−13.3"))
+knitr::kable(df, col.names=c("M","m","Δ_M","Penalty (dB)"),
+  caption="Modulation penalty factor. Each QAM order step costs roughly 4–5 dB.",
+  booktabs=TRUE, align="rrrr")
+```
+
+## Union bounds
+
+Substituting $\Delta_M$ into the BPSK bounds replaces $E_b/N_0$ by $\Delta_M E_b/N_0$.
+Setting $\Delta_M=1$ recovers (UB) and (FER) exactly.
+
+```{r fig-qam, fig.cap="BEP union bounds for Gray-coded M-QAM (30 spectrum terms). Left: rate 1/2, varying M; dotted: uncoded references. Right: 256-QAM, all four rates; dot-dashed+markers: Monte Carlo for R=2/3 and R=3/4.", eval=is_html, out.width="100%"}
+knitr::include_graphics(file.path(fig_dir, "fig_qam.png"))
+```
+
+```{=latex}
+\begin{figure*}[ht]\centering
+\begin{tikzpicture}
+\begin{groupplot}[group style={group size=2 by 1,horizontal sep=2.4cm},
+  ymode=log,ymin=1e-9,ymax=1,grid=both,
+  grid style={line width=0.3pt,draw=gray!30},
+  major grid style={line width=0.5pt,draw=gray!50},
+  tick label style={font=\scriptsize},label style={font=\small},
+  xlabel={$E_b/N_0$ (dB)},
+  legend style={font=\scriptsize,at={(0.97,0.97)},anchor=north east,
+    draw=gray!60,fill=white,inner sep=3pt,row sep=-1pt},
+  legend cell align=left,clip=true]
+\nextgroupplot[width=0.46\textwidth,height=0.46\textwidth,xmin=2,xmax=20,
+  ylabel={BER $P_b$},title={Rate $\frac{1}{2}$, varying $M$},title style={font=\small}]
+\addplot[tufteblue,solid,thick]coordinates{(2.25,2.053e-01)(3,8.896e-04)(4,1.878e-05)(5,4.427e-07)(6,5.609e-09)(6.25,1.638e-09)};
+\addlegendentry{$M=4$}
+\addplot[tuftered,solid,thick]coordinates{(6.25,1.668e-01)(7,8.086e-04)(8,1.743e-05)(9,4.077e-07)(10,5.080e-09)};
+\addlegendentry{$M=16$}
+\addplot[tuftegreen,solid,thick]coordinates{(10.75,1.257e-01)(11.5,7.106e-04)(12.5,1.574e-05)(13.5,3.638e-07)(14.5,4.428e-09)};
+\addlegendentry{$M=64$}
+\addplot[violet,solid,thick]coordinates{(15.5,2.611e-01)(16,3.853e-03)(17,5.031e-05)(18,1.290e-06)(19,2.014e-08)(19.5,1.845e-09)};
+\addlegendentry{$M=256$}
+\addplot[tufteblue,densely dotted,thin]coordinates{(0,7.865e-02)(4,1.250e-02)(8,1.909e-04)(12.5,1.233e-09)};
+\addlegendentry{Uncoded $M=4$}
+\addplot[tuftered,densely dotted,thin]coordinates{(4,5.862e-02)(8,9.247e-03)(12,1.387e-04)(16,6.250e-09)};
+\addlegendentry{Uncoded $M=16$}
+\addplot[tuftegreen,densely dotted,thin]coordinates{(4,1.158e-01)(8,5.232e-02)(12,9.724e-03)(16,2.172e-04)(18,6.351e-06)};
+\addlegendentry{Uncoded $M=64$}
+\addplot[violet,densely dotted,thin]coordinates{(4,1.469e-01)(8,1.033e-01)(12,5.202e-02)(16,1.240e-02)(18,3.472e-03)};
+\addlegendentry{Uncoded $M=256$}
+\nextgroupplot[width=0.46\textwidth,height=0.46\textwidth,xmin=8,xmax=22,
+  ylabel={BER $P_b$},title={256-QAM, varying code rate},title style={font=\small},
+  legend style={font=\scriptsize,at={(0.03,0.03)},anchor=south west,draw=gray!60,fill=white,inner sep=3pt,row sep=-1pt}]
+\addplot[black,densely dotted,thick]coordinates{(8,1.033e-01)(10,7.781e-02)(12,5.202e-02)(14,2.910e-02)(16,1.240e-02)(18,3.472e-03)(20,5.053e-04)(22,2.634e-05)};
+\addlegendentry{Uncoded 256-QAM}
+\addplot[tufteblue,solid,thick]coordinates{(15.5,2.611e-01)(16,3.853e-03)(17,5.031e-05)(18,1.290e-06)(19,2.014e-08)(19.5,1.845e-09)};
+\addlegendentry{$R=1/2$}
+\addplot[tuftered,solid,thick]coordinates{(16,3.747e-01)(16.5,9.126e-03)(17,6.550e-04)(18,1.295e-05)(19,2.503e-07)(20,2.711e-09)};
+\addlegendentry{$R=2/3$ (bound)}
+\addplot[tuftered,dashdotted,thick,mark=square*,mark size=2pt]coordinates{(10,1.044e-01)(11,2.366e-02)(12,3.142e-03)(13,2.813e-04)(14,2.828e-05)(15,2.620e-06)(16,2.178e-07)(17,1.128e-08)};
+\addlegendentry{$R=2/3$ (sim)}
+\addplot[tuftegreen,solid,thick]coordinates{(16.5,4.805e-01)(17,8.652e-03)(18,1.230e-04)(19,3.615e-06)(20,6.910e-08)(20.75,2.114e-09)};
+\addlegendentry{$R=3/4$ (bound)}
+\addplot[tuftegreen,dashdotted,thick,mark=triangle*,mark size=2.5pt]coordinates{(11,1.797e-01)(12,4.449e-02)(13,5.088e-03)(14,5.222e-04)(15,4.147e-05)(16,2.777e-06)(17,1.688e-07)(18,4.070e-09)};
+\addlegendentry{$R=3/4$ (sim)}
+\addplot[violet,solid,thick]coordinates{(17.25,1.509e-01)(17.5,1.783e-02)(18,1.399e-03)(19,4.069e-05)(20,1.116e-06)(21,1.575e-08)};
+\addlegendentry{$R=5/6$}
+\end{groupplot}
+\end{tikzpicture}
+\caption{BEP union bounds for Gray-coded $M$-QAM (30 spectrum terms).
+  Left: rate $\frac{1}{2}$, varying $M$. Right: 256-QAM, all four rates.}
+\label{fig:ber_qam}
+\end{figure*}
+```
+
+# Augmented Trellis and Transfer Function
+
+## Why augment the state
+
+For the unpunctured code the transfer function method uses a $64\times64$ state
+space [@lin04; @viterbi79]. Puncturing makes branch weight *phase-dependent*; augmenting
+the state with the puncture phase $\phi\in\{0,\ldots,L-1\}$ converts this to a
+time-invariant problem [@hagenauer88]. The augmented state is $(\sigma,\phi)$; for
+rate-3/4 ($L=6$) this gives $64\times6=384$ states.
+
+Each branch carries weight $D^d N^u$ where $d=p_\phi v^{(1)}+p_{(\phi+1)\bmod L}v^{(2)}$.
+Branches partition into $\mathbf{E}$: START$\to\mathcal{S}$; $\mathbf{Q}$: $\mathcal{S}\to\mathcal{S}$;
+$\mathbf{R}$: $\mathcal{S}\to$START.
+
+```{r fig-statepartition, fig.cap="E/Q/R partition of the augmented trellis. The transfer function sums over all first-return paths from START to START.", eval=is_html, out.width="60%", fig.align="center"}
+knitr::include_graphics(file.path(fig_dir, "fig_statepartition.png"))
+```
+
+```{=latex}
+\begin{figure}[ht]\centering
+\begin{tikzpicture}[snode/.style={circle,draw,thick,minimum size=0.80cm,font=\small},
+  bigcirc/.style={circle,draw,thick,minimum size=3.2cm},>=Stealth,thick]
+  \node[snode](start)at(0,0){\textsc{s}};
+  \node[bigcirc](S)at(5,0){};\node[font=\small]at(5,0.30){$\mathcal{S}$};
+  \node[font=\scriptsize,color=gray]at(5,-0.45){$64L{-}1$ states};
+  \draw[->,color=tuftegreen,bend left=25,very thick]
+    (start.east)to node[above,font=\small]{$\Emat$}($(S.west)+(0,0.48)$);
+  \draw[->,color=tuftered,bend left=25,very thick]
+    ($(S.west)+(0,-0.48)$)to node[below,font=\small]{$\Rmat$}(start.east);
+  \draw[->,color=tufteblue,very thick](S.north east)
+    to[out=55,in=-55,looseness=4]node[right,font=\small]{$\Qmat$}(S.south east);
+  \begin{scope}[on background layer]
+    \node[draw,rounded corners,dashed,inner sep=0.55cm,fit=(start)(S),fill=white]{};
+  \end{scope}
+\end{tikzpicture}
+\caption{$\Emat/\Qmat/\Rmat$ partition of the augmented trellis.}
+\label{fig:state-partition}
+\end{figure}
+```
+
+# Computing the Transfer Function
+
+The *first-return transfer polynomial* [@lin04; @viterbi79; @blahut83] is
+$$T(D,N)=\mathbf{E}^\top(\mathbf{I}-\mathbf{Q})^{-1}\mathbf{R},\qquad
+\alpha_d=[D^d]T(D,1),\quad\beta_d=[D^d]\tfrac{\partial T}{\partial N}\big|_{N=1}.$$
+
+The Neumann series $(\mathbf{I}-\mathbf{Q})^{-1}\mathbf{R}=\sum_{k\geq0}\mathbf{Q}^k\mathbf{R}$
+avoids matrix inversion [@lin04; @ryan09]. Implementation uses:
+sparse polynomials `Dict[int→(count,weight)]`, combined multiply tracking both $\alpha$
+and $\beta$ in one pass, and early termination when all terms exceed $d_{\max}$.
+
+# Pseudocode
+
+```{r pseudocode-html, results='asis', eval=is_html}
+cat('
+**Algorithm: First-Return Spectrum for Punctured BCC**
+
+**Input:** Puncture mask **p** ∈ {0,1}^L, max distance d_max  
+**Output:** d_free, {α_d}, {β_d} for d ≤ d_max
+
+1. For each augmented state (σ,φ) and u ∈ {0,1}:
+   - Compute (σ′,φ′) and outputs (v⁽¹⁾, v⁽²⁾)
+   - d ← p_φ v⁽¹⁾ + p_{(φ+1) mod L} v⁽²⁾;  pol ← {d ↦ (1,u)}
+   - Route pol to **E**, **Q**, or **R** based on src/dst vs. START
+2. x ← 0;  term ← **R**
+3. Repeat:
+   - x += term;  term ← **Q** · term  (sparse, truncate at d_max)
+   - Until term = 0
+4. T ← **E**^⊤ x;  remove T[0]
+5. d_free ← min(keys(T));  α_d ← T[d].count;  β_d ← T[d].weight
+
+*Note: The all-zero self-loop (START→START, u=0) is excluded.*
+')
+```
+
+```{=latex}
+\begin{figure*}[ht]
+\begin{algorithm}[H]
+\caption{First-Return Spectrum for Punctured BCC}
+\begin{algorithmic}[1]
+\Require Puncture mask $\mathbf{p}\in\{0,1\}^L$, max distance $d_{\max}$
+\Ensure $d_\mathrm{free}$, $\{\alpha_d\}$, $\{\beta_d\}$ for $d\leq d_{\max}$
+\For{each augmented state $(\sigma,\phi)$ and $u\in\{0,1\}$}
+  \State Compute $(\sigma',\phi')$, outputs $(v^{(1)},v^{(2)})$
+  \State $d\leftarrow p_\phi v^{(1)}+p_{(\phi+1)\bmod L}v^{(2)}$;\quad $\mathrm{pol}\leftarrow\{d\mapsto(1,u)\}$
+  \State Route pol to $\Emat$, $\Qmat$, or $\Rmat$ according to src/dst vs.\ \textsc{start}
+\EndFor
+\State $\bx\leftarrow\mathbf{0}$; $\mathrm{term}\leftarrow\Rmat$
+\Repeat
+  \State $\bx\mathrel{+}=\mathrm{term}$;\quad$\mathrm{term}\leftarrow\Qmat\cdot\mathrm{term}$ (truncate at $d_{\max}$)
+\Until{$\mathrm{term}=\mathbf{0}$}
+\State $T\leftarrow\Emat^\top\bx$;\quad remove $T[0]$
+\State $d_\mathrm{free}\leftarrow\min(\mathrm{keys}(T))$;\quad$\alpha_d\leftarrow T[d].\mathrm{count}$;\quad$\beta_d\leftarrow T[d].\mathrm{weight}$
+\end{algorithmic}
+\end{algorithm}
+\caption{All-zero self-loop excluded so only non-trivial error events are counted.}
+\label{fig:algorithm}
+\end{figure*}
+```
+
+# Full Distance Spectrum Tables
+
+```{r spec-tables}
+# Rate 1/2
+s12 <- data.frame(d=c(10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40),
+  alpha=c("11","38","193","1,331","7,275","40,406","234,969","1,337,714","7,594,819","43,375,588","247,339,453","1,409,277,901","8,034,996,288","45,808,756,116","261,128,775,464","1,488,634,502,286"),
+  beta =c("36","211","1,404","11,633","77,433","502,690","3,322,763","21,292,910","134,365,911","843,425,871","5,245,283,348","32,372,937,519","198,723,833,069","1,213,657,958,889","7,378,557,447,583","44,686,304,667,721"))
+knitr::kable(s12,col.names=c("d","α_d","β_d"),
+  caption="Rate 1/2, d_free=10. First 16 non-zero terms. Only even-d terms appear.",
+  booktabs=TRUE,align="rrr")
+```
+
+```{r spec23-table}
+s23 <- data.frame(d=6:20,
+  alpha=c("1","16","48","158","642","2,435","9,174","34,705","131,585","499,608","1,893,179","7,172,729","27,191,646","103,077,011","390,696,502"),
+  beta =c("3","70","285","1,276","6,160","27,128","117,019","498,860","2,103,891","8,784,123","36,328,084","149,215,136","609,374,214","2,475,565,587","10,011,487,814"))
+knitr::kable(s23,col.names=c("d","α_d","β_d"),
+  caption="Rate 2/3, d_free=6. First 15 non-zero terms. Puncturing introduces odd-d terms.",
+  booktabs=TRUE,align="rrr")
+```
+
+```{r spec34-table}
+s34 <- data.frame(d=5:19,
+  alpha=c("8","31","160","892","4,512","23,307","121,077","625,059","3,234,886","16,753,077","86,686,071","448,565,858","2,321,546,552","12,014,661,684","62,177,678,298"),
+  beta =c("42","201","1,492","10,469","62,935","379,644","2,253,373","13,073,811","75,152,755","428,005,675","2,415,121,123","13,534,984,705","75,422,690,722","418,134,779,192","2,307,775,877,171"))
+knitr::kable(s34,col.names=c("d","α_d","β_d"),
+  caption="Rate 3/4, d_free=5. First 15 non-zero terms.",
+  booktabs=TRUE,align="rrr")
+```
+
+```{r spec56-table}
+s56 <- data.frame(d=4:16,
+  alpha=c("14","69","654","4,996","39,699","315,371","2,507,890","19,921,920","158,275,483","1,257,455,600","9,990,453,938","79,372,452,075","630,602,872,400"),
+  beta =c("92","528","8,694","79,453","792,114","7,375,573","67,884,974","610,875,423","5,427,275,376","47,664,215,639","414,847,451,604","3,583,040,670,062","30,748,409,619,146"))
+knitr::kable(s56,col.names=c("d","α_d","β_d"),
+  caption="Rate 5/6, d_free=4. First 13 non-zero terms.",
+  booktabs=TRUE,align="rrr")
+```
+
+# Complexity and Correctness
+
+**State space.** $64L$ augmented states; for $L\leq10$ at most $639\times639$.
+The Neumann iteration converges in milliseconds.
+
+**Convergence.** $\mathbf{Q}^k\mathbf{R}$ has minimum polynomial degree $\geq k$,
+guaranteeing termination within $d_{\max}$ steps [@lin04; @viterbi79].
+
+**Validation.** Published reference values ($d_\mathrm{free}=10$, $\alpha_{10}=11$,
+$\beta_{10}=36$ for rate-1/2) [@ieee80211; @proakis01] are reproduced exactly by
+all three implementations.
+
+\appendix
+
+# Method: Augmented-Trellis First-Return Series {-}
+
+The **augmented-trellis first-return series expansion** combines three ideas.
+*Augmented trellis*: the encoder state is extended by a puncture-phase coordinate
+[@hagenauer88; @yasuda84], converting a phase-dependent problem into a time-invariant graph.
+*First-return*: only paths from START back to START are enumerated — exactly the error events
+entering Viterbi's union bound [@viterbi67].
+*Series expansion*: the Neumann series $(I-Q)^{-1}=\sum_k Q^k$ avoids explicit matrix
+inversion [@lin04; @blahut83].
+
+This is closely related to the transfer function method of Lin & Costello [@lin04],
+Viterbi & Omura [@viterbi79], Blahut [@blahut83], and Ryan & Lin [@ryan09].
+Phase augmentation for punctured codes is due to Hagenauer [@hagenauer88] and
+Yasuda et al. [@yasuda84]; the free-distance optimality of $133_8/171_8$ was
+established by Odenwalder [@odenwalder70] and documented by Heller & Jacobs [@heller71].
+
+# Spectrum Toolkit {-}
+
+Three independent implementations, all producing bit-identical results.  
+Source: <https://github.com/geekymode/bcc_spectrum> [@bcc_github].
+
+- `python/bcc_spectrum.py` — Pure Python 3, stdlib only.
+- `julia/bcc_spectrum.jl` — Julia with typed dicts and in-place polynomial arithmetic.
+- `cpp/bcc_spectrum.cpp` + `bcc_spectrum.h` — C++17 library with command-line driver.
+
+## Python {-}
+
+```{r python-html, results='asis', eval=is_html}
+cat('<pre><code class="language-python">
+# Run from terminal: d_max=30, show 5 terms per rate
+python3 python/bcc_spectrum.py 30 5
+
+# Library API
+from python.bcc_spectrum import compute_spectrum, PUNCTURE_MASKS
+dfree, alpha, beta = compute_spectrum(PUNCTURE_MASKS["1/2"], d_max=60)
+print(dfree, alpha[10], beta[10])   # 10  11  36
+
+# Custom puncture mask
+my_mask = [1, 1, 0, 1, 1, 0]
+dfree, alpha, beta = compute_spectrum(my_mask, d_max=80)
+</code></pre>')
+```
+
+```{=latex}
+\begin{tcolorbox}[codebox=pyblue,title={Python --- command line \& library usage}]
+\begin{lstlisting}
+# Run from terminal: d_max=30, show 5 terms per rate
+python3 python/bcc_spectrum.py 30 5
+
+# Library API
+from python.bcc_spectrum import compute_spectrum, PUNCTURE_MASKS
+dfree, alpha, beta = compute_spectrum(PUNCTURE_MASKS["1/2"], d_max=60)
+print(dfree, alpha[10], beta[10])   # 10  11  36
+
+# Custom puncture mask
+my_mask = [1, 1, 0, 1, 1, 0]
+dfree, alpha, beta = compute_spectrum(my_mask, d_max=80)
+\end{lstlisting}
+\end{tcolorbox}
+```
+
+## Julia {-}
+
+```{r julia-html, results='asis', eval=is_html}
+cat('<pre><code class="language-julia">
+# Run from terminal
+julia julia/bcc_spectrum.jl 30 5
+
+# REPL / script
+include("julia/bcc_spectrum.jl")
+dfree, alpha, beta = compute_spectrum(PUNCTURE_MASKS["3/4"], 60)
+println(dfree, "  ", alpha[5], "  ", beta[5])   # 5  8  42
+</code></pre>')
+```
+
+```{=latex}
+\begin{tcolorbox}[codebox=julgreen,title={Julia --- command line \& interactive usage}]
+\begin{lstlisting}
+# Run from terminal
+julia julia/bcc_spectrum.jl 30 5
+
+# REPL / script
+include("julia/bcc_spectrum.jl")
+dfree, alpha, beta = compute_spectrum(PUNCTURE_MASKS["3/4"], 60)
+println(dfree, "  ", alpha[5], "  ", beta[5])   # 5  8  42
+\end{lstlisting}
+\end{tcolorbox}
+```
+
+## C++ {-}
+
+```{r cpp-html, results='asis', eval=is_html}
+cat('<pre><code class="language-cpp">
+// Build
+g++ -std=c++17 -O2 -o bcc_spectrum cpp/bcc_spectrum.cpp cpp/main.cpp
+
+// Run from terminal
+./bcc_spectrum 30 5
+
+// Library API
+#include "bcc_spectrum.h"
+auto [dfree, alpha, beta] = bcc::compute_spectrum(bcc::mask_half(), 60);
+// dfree=10  alpha[10]=11  beta[10]=36
+</code></pre>')
+```
+
+```{=latex}
+\begin{tcolorbox}[codebox=cppred,title={C++17 --- build, run \& library usage}]
+\begin{lstlisting}
+// Build
+g++ -std=c++17 -O2 -o bcc_spectrum cpp/bcc_spectrum.cpp cpp/main.cpp
+
+// Run from terminal
+./bcc_spectrum 30 5
+
+// Library API
+#include "bcc_spectrum.h"
+auto [dfree, alpha, beta] = bcc::compute_spectrum(bcc::mask_half(), 60);
+// dfree=10  alpha[10]=11  beta[10]=36
+\end{lstlisting}
+\end{tcolorbox}
+```
+
+## Sample output {-}
+
+```
+IEEE 802.11 BCC Distance Spectrum  |  K=7, generators 133_8/171_8
+d_max=30, 5 terms per rate
+============================================================
+Rate 1/2  (puncture period=2)   d_free=10
+   d       alpha_d        beta_d
+  10            11            36
+  12            38           211
+  14           193         1,404
+  16         1,331        11,633
+  18         7,275        77,433
+
+Rate 2/3  (puncture period=4)   d_free=6
+   d       alpha_d        beta_d
+   6             1             3
+   7            16            70
+   8            48           285
+   9           158         1,276
+  10           642         6,160
+
+Rate 3/4  (puncture period=6)   d_free=5
+   d       alpha_d        beta_d
+   5             8            42
+   6            31           201
+   7           160         1,492
+   8           892        10,469
+   9         4,512        62,935
+
+Rate 5/6  (puncture period=10)  d_free=4
+   d       alpha_d        beta_d
+   4            14            92
+   5            69           528
+   6           654         8,694
+   7         4,996        79,453
+   8        39,699       792,114
+```
+
